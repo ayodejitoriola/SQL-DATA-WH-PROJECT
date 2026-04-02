@@ -1,1 +1,43 @@
+use DataWarehouse
+select * from silver.crm_prd_info
+select * from bronze.crm_prd_info
+select prd_id, count(*) from bronze.crm_prd_info
+group by prd_id having count(*) >1 or prd_id is null; -- check for duplicate data and null values in the primary key
 
+select * from bronze.crm_prd_info
+select prd_key, count(*) from bronze.crm_prd_info
+group by prd_key having count(*) >1 or prd_key is null; -- check for duplicate data and null values in the primary key
+
+-- Check for distinct value to enable turn characters into meaningful words
+select distinct(prd_line) from bronze.crm_prd_info
+select distinct(prd_line) from silver.crm_prd_info
+
+if object_id ('silver.crm_prd_info', 'U') is not null -- check if table exist
+	drop table silver.crm_prd_info; -- drop if it exist
+
+create table silver.crm_prd_info(prd_id int, 
+	cat_id NVARCHAR(50), prd_key NVARCHAR(50), prd_nm NVARCHAR(50), prd_cost int, prd_line NVARCHAR(50), 
+	prd_start_dt date, prd_end_dt date, dwh_create_date datetime2 default getdate()); --create new metadata to enable new data structure into the silver layer
+
+insert into silver.crm_prd_info(prd_id, 
+	cat_id, prd_key, prd_nm, prd_cost, prd_line, 
+	prd_start_dt, prd_end_dt) --write the cleaned bronze data into the silver layer
+/*
+Code to cleaned CRM product information and integrate it into the silver layer
+*/
+select prd_id, 
+replace(substring(prd_key, 1, 5), '-', '_') as cat_id, 
+-- seperate cat_id from prd_key and replace - with _ to enable it match with keys on the connecting table
+substring(prd_key, 7, len(prd_key)) as prd_key, -- seperate prd_key from old prd_key 
+prd_nm, isnull(prd_cost, 0) as prd_cost, -- turn null value to zero for numeracy sake
+Case when upper(Trim(prd_line)) = 'M' then 'Mountain' --replace character with meaning words to help data integrity
+	when upper(Trim(prd_line)) = 'R' then 'Road'
+	when upper(Trim(prd_line)) = 'S' then 'Other Sales'
+	when upper(Trim(prd_line)) = 'T' then 'Touring'
+	else 'NA'
+	end
+prd_line, 
+cast(prd_start_dt as date) as prd_start_dt , --turn datetime to date
+cast(lead (prd_start_dt) over (partition by prd_key order by prd_start_dt) -1 as date) as prd_end_dt 
+--engineer the end date to align properly with the start date and turn datetime to date
+from bronze.crm_prd_info
